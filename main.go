@@ -116,12 +116,24 @@ type BuildpackLayerMetadata map[string]map[string]BuildpackLayerInfo
 func (m BuildpackLayerMetadata) metadataFor(initalMetadata BuildpackLayerMetadata, id string, version string) (BuildpackLayerMetadata, error) {
 	bps, ok := m[id]
 	if !ok {
-		return nil, errors.Errorf("could not find %s", id)
+		var available []string
+
+		for bp := range m {
+			available = append(available, bp)
+		}
+
+		return nil, errors.Errorf("could not find %s, options: %s", id, available)
 	}
 
 	info, ok := bps[version]
 	if !ok {
-		return nil, errors.Errorf("could not find %s@%s", id, version)
+		var available []string
+
+		for v := range bps {
+			available = append(available, fmt.Sprintf("%s@%s", id, v))
+		}
+
+		return nil, errors.Errorf("could not find %s@%s, options: %s", id, version, available)
 	}
 
 	_, ok = initalMetadata[id]
