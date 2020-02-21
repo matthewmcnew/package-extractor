@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -16,29 +17,77 @@ import (
 )
 
 var (
-	source      = flag.String("from", "", "location to extract from")
-	destination = flag.String("to", "", "builpackage location to write to")
-	id          = flag.String("id", "", "id to extract")
-	version     = flag.String("version", "", "version to extract")
+	source         = flag.String("from", "", "location to extract from")
+	destination    = flag.String("to", "", "builpackage location to write to")
+	tarDestination = flag.String("to-file", "", "file location to write to")
+	id             = flag.String("id", "", "id to extract")
+	version        = flag.String("version", "", "version to extract")
+	builderAll     = flag.String("builder-all", "", "extract all buildpacks from builder")
 )
 
 func main() {
 	flag.Parse()
 
-	err := extract(*source, *destination, *id, *version)
-	if err != nil {
-
-		log.Fatal(err)
+	if *builderAll != "" {
+		err := extractAll(*source, *destination)
+		if err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		err := extract(*source, *destination, *id, *version)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
+
 }
 
-func extract(from, to, id, version string) error {
+func extractAll(from, to string) error {
 	reference, err := name.ParseReference(from)
 	if err != nil {
 		return err
 	}
 
-	image, err := remote.Image(reference)
+	image, err := remote.Image(reference, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	if err != nil {
+		return err
+	}
+
+	order := Order{}
+	err = imagehelpers.GetLabel(image, "io.buildpacks.buildpack.order", &order)
+	if err != nil {
+		return err
+	}
+
+	for _, g := range order {
+		for _, b := range g.Group {
+			toRef, err := name.ParseReference(to)
+			if err != nil {
+				return err
+			}
+
+			dest := fmt.Sprintf("%s/%s/%s",
+				toRef.Context().RegistryStr(),
+				toRef.Context().RepositoryStr(),
+				strings.ReplaceAll(b.Id, ".", ""))
+
+			err = extract(from, dest, b.Id, "")
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func extract(from, to, id, version string) error {
+
+	reference, err := name.ParseReference(from)
+	if err != nil {
+		return err
+	}
+
+	image, err := remote.Image(reference, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 	if err != nil {
 		return err
 	}
@@ -49,7 +98,7 @@ func extract(from, to, id, version string) error {
 		return err
 	}
 
-	buildpackageMetadata, err := metadata.metadataFor(BuildpackLayerMetadata{}, id, version)
+	buildpackageMetadata, version, err := metadata.metadataFor(BuildpackLayerMetadata{}, id, version)
 	if err != nil {
 		return err
 	}
@@ -113,7 +162,7 @@ func extract(from, to, id, version string) error {
 
 type BuildpackLayerMetadata map[string]map[string]BuildpackLayerInfo
 
-func (m BuildpackLayerMetadata) metadataFor(initalMetadata BuildpackLayerMetadata, id string, version string) (BuildpackLayerMetadata, error) {
+func (m BuildpackLayerMetadata) metadataFor(initalMetadata BuildpackLayerMetadata, id string, version string) (BuildpackLayerMetadata, string, error) {
 	bps, ok := m[id]
 	if !ok {
 		var available []string
@@ -122,7 +171,12 @@ func (m BuildpackLayerMetadata) metadataFor(initalMetadata BuildpackLayerMetadat
 			available = append(available, bp)
 		}
 
-		return nil, errors.Errorf("could not find %s, options: %s", id, available)
+		return nil, "", errors.Errorf("could not find %s, options: %s", id, available)
+	}
+
+	version, err := pickVersion(version, bps)
+	if err != nil {
+		return nil, "", errors.Wrapf(err, "picking version for buildpack %s", id)
 	}
 
 	info, ok := bps[version]
@@ -133,7 +187,7 @@ func (m BuildpackLayerMetadata) metadataFor(initalMetadata BuildpackLayerMetadat
 			available = append(available, fmt.Sprintf("%s@%s", id, v))
 		}
 
-		return nil, errors.Errorf("could not find %s@%s, options: %s", id, version, available)
+		return nil, "", errors.Errorf("could not find %s@%s, options: %s", id, version, available)
 	}
 
 	_, ok = initalMetadata[id]
@@ -146,14 +200,30 @@ func (m BuildpackLayerMetadata) metadataFor(initalMetadata BuildpackLayerMetadat
 		for _, g := range oe.Group {
 
 			var err error
-			initalMetadata, err = m.metadataFor(initalMetadata, g.Id, g.Version)
+			initalMetadata, _, err = m.metadataFor(initalMetadata, g.Id, g.Version)
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
 		}
 	}
 
-	return initalMetadata, nil
+	return initalMetadata, version, nil
+}
+
+func pickVersion(version string, bps map[string]BuildpackLayerInfo) (string, error) {
+	if version != "" {
+		return version, nil
+	}
+
+	if len(bps) != 1 {
+		return "", errors.Errorf("more than one version available")
+	}
+
+	for v := range bps {
+		return v, nil
+	}
+
+	return "", errors.Errorf("error picking version")
 }
 
 type BuildpackLayerInfo struct {
