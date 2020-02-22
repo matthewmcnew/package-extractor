@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"strings"
 
@@ -23,18 +25,32 @@ var (
 	id             = flag.String("id", "", "id to extract")
 	version        = flag.String("version", "", "version to extract")
 	builderAll     = flag.String("builder-all", "", "extract all buildpacks from builder")
+	results        = flag.String("results", "", "path to write results")
 )
 
 func main() {
 	flag.Parse()
 
 	if *builderAll != "" {
-		err := extractAll(*source, *destination)
+		r, err := extractAll(*source, *destination)
 		if err != nil {
 			log.Fatal(err)
 		}
+
+		if *results != "" {
+			file, err := json.MarshalIndent(r, "", " ")
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			err = ioutil.WriteFile(*results, file, 0644)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+
 	} else {
-		err := extract(*source, *destination, *id, *version)
+		_, err := extract(*source, *destination, *id, *version)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -42,28 +58,36 @@ func main() {
 
 }
 
-func extractAll(from, to string) error {
+type Results struct {
+	BuildPackages []string `json:"buildpackages"`
+	Order         Order    `json:"order"`
+}
+
+func extractAll(from, to string) (Results, error) {
+	results := Results{
+		Order: Order{},
+	}
+
 	reference, err := name.ParseReference(from)
 	if err != nil {
-		return err
+		return results, err
 	}
 
 	image, err := remote.Image(reference, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 	if err != nil {
-		return err
+		return results, err
 	}
 
-	order := Order{}
-	err = imagehelpers.GetLabel(image, "io.buildpacks.buildpack.order", &order)
+	err = imagehelpers.GetLabel(image, "io.buildpacks.buildpack.order", &results.Order)
 	if err != nil {
-		return err
+		return results, err
 	}
 
-	for _, g := range order {
+	for _, g := range results.Order {
 		for _, b := range g.Group {
 			toRef, err := name.ParseReference(to)
 			if err != nil {
-				return err
+				return results, err
 			}
 
 			dest := fmt.Sprintf("%s/%s/%s",
@@ -71,58 +95,60 @@ func extractAll(from, to string) error {
 				toRef.Context().RepositoryStr(),
 				strings.ReplaceAll(b.Id, ".", ""))
 
-			err = extract(from, dest, b.Id, "")
+			i, err := extract(from, dest, b.Id, "")
 			if err != nil {
-				return err
+				return results, err
 			}
+
+			results.BuildPackages = append(results.BuildPackages, i)
 		}
 	}
-	return nil
+	return results, nil
 }
 
-func extract(from, to, id, version string) error {
+func extract(from, to, id, version string) (string, error) {
 
 	reference, err := name.ParseReference(from)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	image, err := remote.Image(reference, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	metadata := BuildpackLayerMetadata{}
 	err = imagehelpers.GetLabel(image, "io.buildpacks.buildpack.layers", &metadata)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	buildpackageMetadata, version, err := metadata.metadataFor(BuildpackLayerMetadata{}, id, version)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	buildpackage, err := random.Image(0, 0)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	for _, bps := range buildpackageMetadata {
 		for _, info := range bps {
 			hash, err := v1.NewHash(info.LayerDiffID)
 			if err != nil {
-				return err
+				return "", err
 			}
 
 			layer, err := image.LayerByDiffID(hash)
 			if err != nil {
-				return err
+				return "", err
 			}
 
 			buildpackage, err = mutate.AppendLayers(buildpackage, layer)
 			if err != nil {
-				return err
+				return "", err
 			}
 		}
 	}
@@ -138,26 +164,27 @@ func extract(from, to, id, version string) error {
 		},
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	reference, err = name.ParseReference(to)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	err = remote.Write(reference, buildpackage, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	digest, err := buildpackage.Digest()
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	log.Print(fmt.Sprintf("successfully wrote %s@%s to %s@%s", id, version, to, digest.String()))
-	return nil
+	result := fmt.Sprintf("%s@%s", to, digest.String())
+	log.Printf("successfully wrote %s@%s to %s", id, version, result)
+	return result, nil
 }
 
 type BuildpackLayerMetadata map[string]map[string]BuildpackLayerInfo
