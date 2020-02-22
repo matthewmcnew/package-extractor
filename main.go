@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"sort"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -134,22 +135,20 @@ func extract(from, to, id, version string) (string, error) {
 		return "", err
 	}
 
-	for _, bps := range buildpackageMetadata {
-		for _, info := range bps {
-			hash, err := v1.NewHash(info.LayerDiffID)
-			if err != nil {
-				return "", err
-			}
+	for _, info := range determinsticSort(buildpackageMetadata) {
+		hash, err := v1.NewHash(info.LayerDiffID)
+		if err != nil {
+			return "", err
+		}
 
-			layer, err := image.LayerByDiffID(hash)
-			if err != nil {
-				return "", err
-			}
+		layer, err := image.LayerByDiffID(hash)
+		if err != nil {
+			return "", err
+		}
 
-			buildpackage, err = mutate.AppendLayers(buildpackage, layer)
-			if err != nil {
-				return "", err
-			}
+		buildpackage, err = mutate.AppendLayers(buildpackage, layer)
+		if err != nil {
+			return "", err
 		}
 	}
 
@@ -251,6 +250,21 @@ func pickVersion(version string, bps map[string]BuildpackLayerInfo) (string, err
 	}
 
 	return "", errors.Errorf("error picking version")
+}
+
+func determinsticSort(metadata BuildpackLayerMetadata) []BuildpackLayerInfo {
+	layers := []BuildpackLayerInfo{}
+	for _, bps := range metadata {
+		for _, info := range bps {
+			layers = append(layers, info)
+		}
+	}
+
+	sort.Slice(layers, func(i, j int) bool {
+		return layers[i].LayerDiffID > layers[j].LayerDiffID
+	})
+
+	return layers
 }
 
 type BuildpackLayerInfo struct {
