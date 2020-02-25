@@ -64,6 +64,15 @@ type Results struct {
 	Order         Order    `json:"order"`
 }
 
+func (r *Results) appendBuildPackage(i string) {
+	for _, b := range r.BuildPackages {
+		if b == i {
+			return
+		}
+	}
+	r.BuildPackages = append(r.BuildPackages, i)
+}
+
 func extractAll(from, to string) (Results, error) {
 	results := Results{
 		Order: Order{},
@@ -101,7 +110,7 @@ func extractAll(from, to string) (Results, error) {
 				return results, err
 			}
 
-			results.BuildPackages = append(results.BuildPackages, i)
+			results.appendBuildPackage(i)
 		}
 	}
 	return results, nil
