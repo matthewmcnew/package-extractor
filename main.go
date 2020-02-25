@@ -62,6 +62,7 @@ func main() {
 type Results struct {
 	BuildPackages []string `json:"buildpackages"`
 	Order         Order    `json:"order"`
+	Source        string   `json:"source"`
 }
 
 func (r *Results) appendBuildPackage(i string) {
@@ -75,7 +76,8 @@ func (r *Results) appendBuildPackage(i string) {
 
 func extractAll(from, to string) (Results, error) {
 	results := Results{
-		Order: Order{},
+		Order:  Order{},
+		Source: from,
 	}
 
 	reference, err := name.ParseReference(from)
