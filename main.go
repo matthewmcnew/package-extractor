@@ -19,6 +19,11 @@ import (
 	"github.com/pkg/errors"
 )
 
+const (
+	layersMetadata       = "io.buildpacks.buildpack.layers"
+	buildPackageMetadata = "io.buildpacks.buildpackage.metadata"
+)
+
 var (
 	source         = flag.String("from", "", "location to extract from")
 	destination    = flag.String("to", "", "builpackage location to write to")
@@ -59,15 +64,24 @@ func main() {
 
 }
 
-type Results struct {
-	BuildPackages []string `json:"buildpackages"`
-	Order         Order    `json:"order"`
-	Source        string   `json:"source"`
+type BuildPackage struct {
+	Image       string  `json:"image"`
+	Description string  `json:"description"`
+	Id          string  `json:"id"`
+	Version     string  `json:"version"`
+	Digest      string  `json:"digest"`
+	Stacks      []Stack `json:"stacks"`
 }
 
-func (r *Results) appendBuildPackage(i string) {
+type Results struct {
+	BuildPackages []BuildPackage `json:"buildpackages"`
+	Order         Order          `json:"order"`
+	Source        string         `json:"source"`
+}
+
+func (r *Results) appendBuildPackage(i BuildPackage) {
 	for _, b := range r.BuildPackages {
-		if b == i {
+		if b.Image == i.Image {
 			return
 		}
 	}
@@ -118,54 +132,53 @@ func extractAll(from, to string) (Results, error) {
 	return results, nil
 }
 
-func extract(from, to, id, version string) (string, error) {
-
+func extract(from, to, id, version string) (BuildPackage, error) {
 	reference, err := name.ParseReference(from)
 	if err != nil {
-		return "", err
+		return BuildPackage{}, err
 	}
 
 	image, err := remote.Image(reference, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 	if err != nil {
-		return "", err
+		return BuildPackage{}, err
 	}
 
 	metadata := BuildpackLayerMetadata{}
-	err = imagehelpers.GetLabel(image, "io.buildpacks.buildpack.layers", &metadata)
+	err = imagehelpers.GetLabel(image, layersMetadata, &metadata)
 	if err != nil {
-		return "", err
+		return BuildPackage{}, err
 	}
 
 	buildpackageMetadata, version, err := metadata.metadataFor(BuildpackLayerMetadata{}, id, version)
 	if err != nil {
-		return "", err
+		return BuildPackage{}, err
 	}
 
 	buildpackage, err := random.Image(0, 0)
 	if err != nil {
-		return "", err
+		return BuildPackage{}, err
 	}
 
 	for _, info := range determinsticSort(buildpackageMetadata) {
 		hash, err := v1.NewHash(info.LayerDiffID)
 		if err != nil {
-			return "", err
+			return BuildPackage{}, err
 		}
 
 		layer, err := image.LayerByDiffID(hash)
 		if err != nil {
-			return "", err
+			return BuildPackage{}, err
 		}
 
 		buildpackage, err = mutate.AppendLayers(buildpackage, layer)
 		if err != nil {
-			return "", err
+			return BuildPackage{}, err
 		}
 	}
 
 	buildpackage, err = imagehelpers.SetLabels(buildpackage, map[string]interface{}{
-		"io.buildpacks.buildpack.layers": buildpackageMetadata,
-		"io.buildpacks.buildpackage.metadata": Metadata{
+		layersMetadata: buildpackageMetadata,
+		buildPackageMetadata: Metadata{
 			BuildpackInfo: BuildpackInfo{
 				Id:      id,
 				Version: version,
@@ -174,27 +187,36 @@ func extract(from, to, id, version string) (string, error) {
 		},
 	})
 	if err != nil {
-		return "", err
+		return BuildPackage{}, err
 	}
 
 	reference, err = name.ParseReference(to)
 	if err != nil {
-		return "", err
+		return BuildPackage{}, err
 	}
 
 	err = remote.Write(reference, buildpackage, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 	if err != nil {
-		return "", err
+		return BuildPackage{}, err
 	}
 
 	digest, err := buildpackage.Digest()
 	if err != nil {
-		return "", err
+		return BuildPackage{}, err
 	}
 
+	description := fmt.Sprintf("%s@%s", id, version)
 	result := fmt.Sprintf("%s@%s", to, digest.String())
-	log.Printf("successfully wrote %s@%s to %s", id, version, result)
-	return result, nil
+	log.Printf("successfully wrote %s to %s", description, result)
+
+	return BuildPackage{
+		Image:       result,
+		Description: description,
+		Id:          id,
+		Version:     version,
+		Digest:      digest.String(),
+		Stacks:      buildpackageMetadata[id][version].Stacks,
+	}, nil
 }
 
 type BuildpackLayerMetadata map[string]map[string]BuildpackLayerInfo
