@@ -71,6 +71,7 @@ type BuildPackage struct {
 	Version     string  `json:"version"`
 	Digest      string  `json:"digest"`
 	Stacks      []Stack `json:"stacks"`
+	Tag         string  `json:"tag"`
 }
 
 type Results struct {
@@ -200,6 +201,11 @@ func extract(from, to, id, version string) (BuildPackage, error) {
 		return BuildPackage{}, err
 	}
 
+	err = remote.Tag(reference.Context().Tag(version), buildpackage, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	if err != nil {
+		return BuildPackage{}, err
+	}
+
 	digest, err := buildpackage.Digest()
 	if err != nil {
 		return BuildPackage{}, err
@@ -216,6 +222,7 @@ func extract(from, to, id, version string) (BuildPackage, error) {
 		Version:     version,
 		Digest:      digest.String(),
 		Stacks:      buildpackageMetadata[id][version].Stacks,
+		Tag:         version,
 	}, nil
 }
 
