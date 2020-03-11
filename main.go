@@ -17,6 +17,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/pivotal/kpack/pkg/registry/imagehelpers"
 	"github.com/pkg/errors"
+
+	"github.com/matthewmcnew/package-extractor/stack"
 )
 
 const (
@@ -65,13 +67,13 @@ func main() {
 }
 
 type BuildPackage struct {
-	Image       string  `json:"image"`
-	Description string  `json:"description"`
-	Id          string  `json:"id"`
-	Version     string  `json:"version"`
-	Digest      string  `json:"digest"`
-	Stacks      []Stack `json:"stacks"`
-	Tag         string  `json:"tag"`
+	Image       string        `json:"image"`
+	Description string        `json:"description"`
+	Id          string        `json:"id"`
+	Version     string        `json:"version"`
+	Digest      string        `json:"digest"`
+	Stacks      []stack.Stack `json:"stacks"`
+	Tag         string        `json:"tag"`
 }
 
 type Results struct {
@@ -184,7 +186,7 @@ func extract(from, to, id, version string) (BuildPackage, error) {
 				Id:      id,
 				Version: version,
 			},
-			Stacks: buildpackageMetadata[id][version].Stacks,
+			Stacks: calculateStack(buildpackageMetadata),
 		},
 	})
 	if err != nil {
@@ -221,7 +223,7 @@ func extract(from, to, id, version string) (BuildPackage, error) {
 		Id:          id,
 		Version:     version,
 		Digest:      digest.String(),
-		Stacks:      buildpackageMetadata[id][version].Stacks,
+		Stacks:      calculateStack(buildpackageMetadata),
 		Tag:         version,
 	}, nil
 }
@@ -292,6 +294,25 @@ func pickVersion(version string, bps map[string]BuildpackLayerInfo) (string, err
 	return "", errors.Errorf("error picking version")
 }
 
+func calculateStack(metadata BuildpackLayerMetadata) []stack.Stack {
+	var stacks []stack.Stack
+	for _, bpi := range metadata {
+		for _, bp := range bpi {
+			if len(stacks) == 0 {
+				stacks = bp.Stacks
+			} else if len(bp.Stacks) > 0 { // skip over "meta-buildpacks"
+				stacks = stack.MergeCompatible(stacks, bp.Stacks)
+			}
+		}
+	}
+
+	sort.Slice(stacks, func(i, j int) bool {
+		return stacks[i].ID > stacks[j].ID
+	})
+
+	return stacks
+}
+
 func determinsticSort(metadata BuildpackLayerMetadata) []BuildpackLayerInfo {
 	layers := []BuildpackLayerInfo{}
 	for _, bps := range metadata {
@@ -308,10 +329,10 @@ func determinsticSort(metadata BuildpackLayerMetadata) []BuildpackLayerInfo {
 }
 
 type BuildpackLayerInfo struct {
-	API         string  `json:"api"`
-	Stacks      []Stack `json:"stacks,omitempty"`
-	Order       Order   `json:"order,omitempty"`
-	LayerDiffID string  `json:"layerDiffID"`
+	API         string        `json:"api"`
+	Stacks      []stack.Stack `json:"stacks,omitempty"`
+	Order       Order         `json:"order,omitempty"`
+	LayerDiffID string        `json:"layerDiffID"`
 }
 
 type Order []OrderEntry
@@ -330,12 +351,7 @@ type BuildpackInfo struct {
 	Version string `json:"version,omitempty"`
 }
 
-type Stack struct {
-	ID     string   `json:"id"`
-	Mixins []string `json:"mixins,omitempty"`
-}
-
 type Metadata struct {
 	BuildpackInfo
-	Stacks []Stack `toml:"stacks" json:"stacks,omitempty"`
+	Stacks []stack.Stack `toml:"stacks" json:"stacks,omitempty"`
 }
