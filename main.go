@@ -183,8 +183,9 @@ func extract(from, to, id, version string) (BuildPackage, error) {
 		layersMetadata: buildpackageMetadata,
 		buildPackageMetadata: Metadata{
 			BuildpackInfo: BuildpackInfo{
-				Id:      id,
-				Version: version,
+				Id:       id,
+				Version:  version,
+				Homepage: buildpackageMetadata[id][version].Homepage,
 			},
 			Stacks: calculateStack(buildpackageMetadata),
 		},
@@ -333,6 +334,7 @@ type BuildpackLayerInfo struct {
 	Stacks      []stack.Stack `json:"stacks,omitempty"`
 	Order       Order         `json:"order,omitempty"`
 	LayerDiffID string        `json:"layerDiffID"`
+	Homepage    string        `json:"homepage,omitempty"`
 }
 
 type Order []OrderEntry
@@ -347,8 +349,9 @@ type BuildpackRef struct {
 }
 
 type BuildpackInfo struct {
-	Id      string `json:"id"`
-	Version string `json:"version,omitempty"`
+	Id       string `json:"id"`
+	Version  string `json:"version,omitempty"`
+	Homepage string `json:"homepage,omitempty"`
 }
 
 type Metadata struct {
