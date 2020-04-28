@@ -40,7 +40,7 @@ type Results struct {
 	Source        string         `json:"source"`
 }
 
-func (r *Results) appendBuildPackage(i BuildPackage) {
+func (r *Results) AppendBuildPackage(i BuildPackage) {
 	for _, b := range r.BuildPackages {
 		if b.Image == i.Image {
 			return
@@ -87,7 +87,7 @@ func ExtractAll(from, to string) (Results, error) {
 				return results, err
 			}
 
-			results.appendBuildPackage(i)
+			results.AppendBuildPackage(i)
 		}
 	}
 	return results, nil
