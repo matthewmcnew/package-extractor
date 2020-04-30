@@ -35,9 +35,9 @@ type BuildPackage struct {
 }
 
 type Results struct {
-	BuildPackages []BuildPackage `json:"buildpackages"`
-	Order         Order          `json:"order"`
-	Source        string         `json:"source"`
+	BuildPackages []BuildPackage   `json:"buildpackages"`
+	Order         map[string]Order `json:"order"`
+	Source        string           `json:"source"`
 }
 
 func (r *Results) AppendBuildPackage(i BuildPackage) {
@@ -50,8 +50,9 @@ func (r *Results) AppendBuildPackage(i BuildPackage) {
 }
 
 func ExtractAll(from, to string) (Results, error) {
+	const orderName = "default"
 	results := Results{
-		Order:  Order{},
+		Order:  map[string]Order{},
 		Source: from,
 	}
 
@@ -65,12 +66,14 @@ func ExtractAll(from, to string) (Results, error) {
 		return results, err
 	}
 
-	err = imagehelpers.GetLabel(image, OrderLabel, &results.Order)
+	var order Order
+	err = imagehelpers.GetLabel(image, OrderLabel, &order)
 	if err != nil {
 		return results, err
 	}
+	results.Order[orderName] = order
 
-	for _, g := range results.Order {
+	for _, g := range order {
 		for _, b := range g.Group {
 			toRef, err := name.ParseReference(to)
 			if err != nil {
@@ -90,6 +93,7 @@ func ExtractAll(from, to string) (Results, error) {
 			results.AppendBuildPackage(i)
 		}
 	}
+
 	return results, nil
 }
 
